@@ -47,82 +47,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = process.env.DEEPSEEK_API_KEY;
-    /*if (!apiKey) {
-      console.error('DEEPSEEK_API_KEY is not configured');
-      return NextResponse.json(
-        { error: '服务配置错误，请联系管理员' },
-        { status: 500 }
-      );
-    }*/
+    // 核心改造：读取环境变量，判断当前是跑在本地(local)还是云端(cloud)
+    const mode = process.env.NEXT_PUBLIC_MODEL_MODE || 'cloud';
+    console.log(`当前运行模式: ${mode}`);
 
     const userMessage = `今日饮食：鸡胸肉 ${chicken}克、糙米 ${rice}克、鸡蛋 ${eggs}个。请评估蛋白质摄入并给出维生素补充建议。`;
 
-    const response = await fetch('http://100.107.199.24:11434/api/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ollama`,
-      },
-      body: JSON.stringify({
-        model: 'deepseek-r1:7b',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userMessage },
-        ],
-        stream:false,
-        temperature: 0.7,
-        max_tokens: 300,
-        response_format: { type: 'json_object' },
-      }),
-    });
+    let response;
+    let content;
 
-    if (!response.ok) {
-      console.error(`DeepSeek API error: ${response.status}`);
-      return NextResponse.json(
-        { error: 'AI 服务暂时不可用，请稍后重试' },
-        { status: response.status }
-      );
-    }
-
-    const data = await response.json();
-    const content = data.message?.content;
-
-    if (!content) {
-      return NextResponse.json(
-        { error: 'AI 返回数据异常，请重试' },
-        { status: 500 }
-      );
-    }
-
-    let parsed: EvaluateResponse;
-    try {
-      // 暴力正则：把 <think> 到 </think> 之间的所有内容全部干掉，只留干净的 JSON
-      let cleanContent = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-      cleanContent = cleanContent.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim();
-      console.log("清洗后的纯JSON:", cleanContent); // 可以在终端看看长啥样
-      parsed = JSON.parse(cleanContent);
-    } catch {
-      console.error('Failed to parse AI response:', content);
-      return NextResponse.json(
-        { error: 'AI 返回格式错误，请重试' },
-        { status: 500 }
-      );
-    }
-
-    if (!parsed.protein || !parsed.warning) {
-      return NextResponse.json(
-        { error: 'AI 返回数据不完整，请重试' },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json(parsed);
-  } catch (error) {
-    console.error('API route error:', error);
-    return NextResponse.json(
-      { error: '网络波动，请重试' },
-      { status: 500 }
-    );
-  }
-}
+    // 💡 双轨路由策略
+    if (mode === 'local') {
+      // 模式 A：本地 5060 节点（免 Key，直连）
+      response = await fetch('http://100.107.199.24:11434/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'deepseek-r1:7b',
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userMessage },
+          ],
+          stream: false,
+          options: { temperature: 0.7, num_predict: 300 }

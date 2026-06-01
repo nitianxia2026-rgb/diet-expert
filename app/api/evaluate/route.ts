@@ -70,3 +70,75 @@ export async function POST(request: NextRequest) {
           ],
           stream: false,
           options: { temperature: 0.7, num_predict: 300 }
+        }),
+      });
+      
+      const data = await response.json();
+      content = data.message?.content; // Ollama 的解析路径
+
+    } else {
+      // 模式 B：云端公网 API（需 Key，适合全网访问）
+      const apiKey = process.env.DEEPSEEK_API_KEY;
+      if (!apiKey) {
+        return NextResponse.json({ error: '云端未配置 DEEPSEEK_API_KEY' }, { status: 500 });
+      }
+
+      response = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'deepseek-chat', // 云端建议用普通版，速度快，不带 think 标签
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userMessage },
+          ],
+          temperature: 0.7,
+          response_format: { type: 'json_object' }
+        }),
+      });
+
+      const data = await response.json();
+      content = data.choices?.[0]?.message?.content; // OpenAI/DeepSeek 官方的解析路径
+    }
+
+    if (!response.ok) {
+      console.error(`AI API error: ${response.status}`);
+      return NextResponse.json(
+        { error: 'AI 服务暂时不可用，请稍后重试' },
+        { status: response.status }
+      );
+    }
+
+    if (!content) {
+      return NextResponse.json({ error: 'AI 返回数据异常，请重试' }, { status: 500 });
+    }
+
+    let parsed: EvaluateResponse;
+    try {
+      // 暴力清洗逻辑（云端和本地通用）
+      let cleanContent = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      cleanContent = cleanContent.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim();
+      console.log("清洗后的纯JSON:", cleanContent);
+      parsed = JSON.parse(cleanContent);
+    } catch {
+      console.error('Failed to parse AI response:', content);
+      return NextResponse.json({ error: 'AI 返回格式错误，请重试' }, { status: 500 });
+    }
+
+    if (!parsed.protein || !parsed.warning) {
+      return NextResponse.json({ error: 'AI 返回数据不完整，请重试' }, { status: 500 });
+    }
+
+    return NextResponse.json(parsed);
+
+  } catch (error) {
+    console.error('API route error (云端真实报错):', error);
+    return NextResponse.json(
+      { error: '网络波动，请检查服务器连接' },
+      { status: 500 }
+    );
+  }
+}
